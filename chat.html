@@ -8,7 +8,7 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #0a0a0a; color: #fff; font-family: 'Inter', sans-serif; height: 100dvh; -webkit-font-smoothing: antialiased; }
 
-  .nav { position: fixed; top: 16px; right: 24px; z-index: 10; }
+  .nav { position: fixed; top: 16px; right: 24px; z-index: 10; display: flex; gap: 16px; }
   .nav a { font: 11px 'JetBrains Mono', monospace; color: #444; text-decoration: none; }
   .nav a:hover { color: #a855f7; }
 
@@ -41,7 +41,11 @@
 </head>
 <body>
 
-<div class="nav"><a href="pipeline.html" target="_blank">pipeline ↗</a></div>
+<div class="nav">
+  <a href="lesson.html" target="_blank">lesson</a>
+  <a href="pipeline.html" target="_blank">pipeline</a>
+  <a href="tokenize.html" target="_blank">tokenizer</a>
+</div>
 
 <div class="page">
   <div class="msgs" id="msgs">
