@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>jllm pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000; --surface: #0a0a0a; --card: #111; --border: #1f1f1f;
+    --text: #fff; --text-2: #999; --text-3: #555;
+    --accent: #a855f7; --accent2: #ec4899;
+    --green: #22c55e; --blue: #3b82f6; --yellow: #eab308; --red: #ef4444; --orange: #f97316;
+    --mono: 'JetBrains Mono', monospace; --sans: 'Inter', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); height: 100dvh; display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; overflow: hidden; }
+
+  /* Header */
+  .header { padding: 10px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .logo { font-size: 20px; font-weight: 600; letter-spacing: -0.5px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .logo span { font-weight: 300; -webkit-text-fill-color: var(--text-3); font-size: 14px; margin-left: 8px; letter-spacing: 0; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .source-badge { padding: 4px 12px; border-radius: 6px; font-size: 10px; font-family: var(--mono); font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; }
+  .counter { font-size: 12px; font-family: var(--mono); color: var(--text-3); }
+
+  /* Main split */
+  .main { flex: 1; display: flex; overflow: hidden; }
+
+  /* ── Left panel: data/tokens/mask ── */
+  .left-panel { flex: 0 0 52%; display: flex; flex-direction: column; border-right: 1px solid var(--border); overflow: hidden; }
+  .left-scroll { flex: 1; overflow-y: auto; padding: 0; }
+  .left-scroll::-webkit-scrollbar { width: 3px; }
+  .left-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .section { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .section:last-child { border-bottom: none; }
+  .section-label { font-size: 9px; font-family: var(--mono); letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-3); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .section-num { width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; }
+  .section.hidden { opacity: 0; transition: opacity 0.4s ease; }
+  .section.visible { opacity: 1; }
+
+  /* Raw messages */
+  .raw-msg { margin-bottom: 8px; }
+  .raw-role { font-size: 8px; font-family: var(--mono); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 2px; }
+  .raw-role.user { color: var(--accent); }
+  .raw-role.assistant { color: var(--accent2); }
+  .raw-text { font-size: 12px; line-height: 1.6; color: var(--text-2); padding: 6px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; max-height: 100px; overflow-y: auto; }
+  .raw-text::-webkit-scrollbar { width: 2px; }
+  .raw-text::-webkit-scrollbar-thumb { background: var(--border); }
+  .raw-text.user { background: rgba(168,85,247,0.05); border: 1px solid rgba(168,85,247,0.12); }
+  .raw-text.assistant { background: rgba(236,72,153,0.05); border: 1px solid rgba(236,72,153,0.12); }
+
+  /* Mask view */
+  .mask-msg { margin-bottom: 8px; padding: 6px 10px; border-radius: 6px; }
+  .mask-msg.masked-bg { background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); }
+  .mask-msg.train-bg { background: rgba(168,85,247,0.05); border: 1px solid rgba(168,85,247,0.15); }
+  .mask-label { font-size: 8px; font-family: var(--mono); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }
+  .mask-label.off { color: var(--text-3); }
+  .mask-label.on { color: var(--accent); }
+  .mask-tokens { display: flex; flex-wrap: wrap; gap: 1px; }
+  .mask-tok { font-size: 9px; font-family: var(--mono); padding: 1px 2px; border-radius: 2px; white-space: pre; }
+  .mask-tok.dim { opacity: 0.12; color: var(--text-3); }
+  .mask-tok.lit { color: var(--accent); background: rgba(168,85,247,0.1); }
+
+  /* Stats row */
+  .stats-row { display: flex; gap: 16px; padding: 6px 0; flex-wrap: wrap; }
+  .stat-item { display: flex; flex-direction: column; gap: 1px; }
+  .stat-val { font-size: 16px; font-weight: 700; font-family: var(--mono); }
+  .stat-lbl { font-size: 9px; font-family: var(--mono); color: var(--text-3); text-transform: uppercase; letter-spacing: 1px; }
+
+  /* ── Right panel: network visualization ── */
+  .right-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 12px 20px; }
+
+  /* Phase indicator */
+  .phase-box { text-align: center; margin-bottom: 8px; flex-shrink: 0; }
+  .phase-text { font-size: 11px; font-family: var(--mono); letter-spacing: 1px; text-transform: uppercase; padding: 4px 14px; border-radius: 6px; display: inline-block; transition: all 0.3s ease; }
+
+  /* Output area (top of network) */
+  .net-output { text-align: center; padding: 6px 0 8px; flex-shrink: 0; min-height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .loss-label { font-size: 10px; font-family: var(--mono); color: var(--text-3); letter-spacing: 1px; text-transform: uppercase; }
+  .loss-val { font-size: 20px; font-weight: 700; font-family: var(--mono); color: var(--accent2); opacity: 0; transition: opacity 0.4s ease; }
+  .loss-val.show { opacity: 1; }
+  .loss-explain { font-size: 10px; color: var(--text-3); font-family: var(--mono); opacity: 0; transition: opacity 0.4s ease; }
+  .loss-explain.show { opacity: 1; }
+
+  /* Layer stack */
+  .layer-stack { flex: 1; display: flex; flex-direction: column-reverse; gap: 2px; padding: 4px 0; justify-content: center; overflow: hidden; }
+  .layer-row { display: flex; align-items: center; gap: 6px; height: 14px; }
+  .layer-num { font-size: 8px; font-family: var(--mono); color: var(--text-3); width: 20px; text-align: right; flex-shrink: 0; opacity: 0.4; transition: opacity 0.15s; }
+  .layer-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.04); transition: all 0.15s ease; position: relative; overflow: hidden; }
+  .layer-delta { font-size: 8px; font-family: var(--mono); width: 50px; flex-shrink: 0; text-align: left; opacity: 0; transition: opacity 0.3s ease; }
+
+  /* Layer animation states */
+  .layer-row.fwd .layer-bar { background: var(--green); box-shadow: 0 0 12px rgba(34,197,94,0.6); }
+  .layer-row.fwd .layer-num { opacity: 1; color: var(--green); }
+  .layer-row.fwd-done .layer-bar { background: rgba(34,197,94,0.12); }
+  .layer-row.fwd-done .layer-num { opacity: 0.6; }
+
+  .layer-row.bwd .layer-bar { background: var(--accent); box-shadow: 0 0 12px rgba(168,85,247,0.6); }
+  .layer-row.bwd .layer-num { opacity: 1; color: var(--accent); }
+  .layer-row.bwd-done .layer-bar { background: rgba(168,85,247,0.12); }
+  .layer-row.bwd-done .layer-num { opacity: 0.6; }
+
+  .layer-row.updating .layer-bar { background: rgba(234,179,8,0.35); box-shadow: 0 0 8px rgba(234,179,8,0.3); }
+  .layer-row.updating .layer-num { opacity: 1; color: var(--yellow); }
+  .layer-row.updating .layer-delta { opacity: 1; }
+
+  .layer-row.done .layer-bar { background: rgba(34,197,94,0.08); }
+  .layer-row.done .layer-num { opacity: 0.3; }
+
+  /* Input area (bottom of network) */
+  .net-input { text-align: center; padding: 8px 0 4px; flex-shrink: 0; min-height: 45px; }
+  .input-label { font-size: 10px; font-family: var(--mono); color: var(--text-3); letter-spacing: 1px; text-transform: uppercase; }
+  .input-val { font-size: 16px; font-weight: 700; font-family: var(--mono); color: var(--green); }
+  .input-detail { font-size: 10px; font-family: var(--mono); color: var(--text-3); }
+
+  /* Result area */
+  .result-box { text-align: center; padding: 8px 0; flex-shrink: 0; min-height: 36px; }
+  .result-text { font-size: 11px; font-family: var(--mono); color: var(--green); opacity: 0; transition: opacity 0.5s ease; }
+  .result-text.show { opacity: 1; }
+
+  /* Footer */
+  .footer { padding: 8px 24px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .footer span { font-size: 11px; color: var(--text-3); font-family: var(--mono); }
+
+  /* Tool call rendering */
+  .tool-expr { background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.25); border-radius: 3px; padding: 0 4px; font-family: var(--mono); font-size: 10px; color: var(--yellow); }
+  .tool-out { background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.25); border-radius: 3px; padding: 0 4px; font-family: var(--mono); font-size: 10px; color: var(--green); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">jllm <span>the chain</span></div>
+  <div class="header-right">
+    <div class="source-badge" id="source-badge">loading</div>
+    <div class="counter">#<span id="served-count">0</span></div>
+  </div>
+</div>
+
+<div class="main">
+  <!-- Left: data pipeline stages -->
+  <div class="left-panel">
+    <div class="left-scroll" id="left-scroll">
+      <!-- Stage 1: Raw Data -->
+      <div class="section hidden" id="sec-data">
+        <div class="section-label">
+          <div class="section-num" style="background:rgba(255,255,255,0.08); color:var(--text-2);">1</div>
+          the data
+        </div>
+        <div id="s1-content"></div>
+      </div>
+
+      <!-- Stage 2: Loss Mask -->
+      <div class="section hidden" id="sec-mask">
+        <div class="section-label">
+          <div class="section-num" style="background:rgba(168,85,247,0.15); color:var(--accent);">2</div>
+          tokenize + mask
+        </div>
+        <div id="s2-content"></div>
+      </div>
+
+      <!-- Stats -->
+      <div class="section hidden" id="sec-stats">
+        <div class="section-label">
+          <div class="section-num" style="background:rgba(34,197,94,0.15); color:var(--green);">3</div>
+          signal
+        </div>
+        <div id="s3-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: animated network -->
+  <div class="right-panel">
+    <div class="phase-box">
+      <span class="phase-text" id="phase-text" style="background:rgba(255,255,255,0.05); color:var(--text-3);">waiting</span>
+    </div>
+
+    <div class="net-output">
+      <div class="loss-label">output / loss</div>
+      <div class="loss-val" id="loss-val">--</div>
+      <div class="loss-explain" id="loss-explain">how wrong was each prediction?</div>
+    </div>
+
+    <div class="layer-stack" id="layer-stack"></div>
+
+    <div class="net-input">
+      <div class="input-label">input tokens</div>
+      <div class="input-val" id="input-val">--</div>
+      <div class="input-detail" id="input-detail">trainable tokens enter the network</div>
+    </div>
+
+    <div class="result-box">
+      <div class="result-text" id="result-text"></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>space to pause &middot; n for next &middot; 1-6 filter by source</span>
+  <span id="status-text">connecting...</span>
+</div>
+
+<script>
+var API = "http://localhost:8094";
+var playing = true;
+var filter = null;
+var LAYERS = 26;
+var animTimer = null;
+var sourceKeys = { "1":"smoltalk", "2":"gsm8k", "3":"mmlu", "4":"spellingbee", "5":"spelling", "6":"identity" };
+
+/* DOM refs */
+var secData = document.getElementById("sec-data");
+var secMask = document.getElementById("sec-mask");
+var secStats = document.getElementById("sec-stats");
+var s1 = document.getElementById("s1-content");
+var s2 = document.getElementById("s2-content");
+var s3 = document.getElementById("s3-content");
+var sourceBadge = document.getElementById("source-badge");
+var servedCount = document.getElementById("served-count");
+var statusText = document.getElementById("status-text");
+var phaseText = document.getElementById("phase-text");
+var lossVal = document.getElementById("loss-val");
+var lossExplain = document.getElementById("loss-explain");
+var inputVal = document.getElementById("input-val");
+var inputDetail = document.getElementById("input-detail");
+var resultText = document.getElementById("result-text");
+var layerStack = document.getElementById("layer-stack");
+
+/* Build layer rows */
+var layerRows = [];
+for (var i = 0; i < LAYERS; i++) {
+  var row = document.createElement("div");
+  row.className = "layer-row";
+
+  var num = document.createElement("div");
+  num.className = "layer-num";
+  num.textContent = "L" + (i + 1);
+  row.appendChild(num);
+
+  var bar = document.createElement("div");
+  bar.className = "layer-bar";
+  row.appendChild(bar);
+
+  var delta = document.createElement("div");
+  delta.className = "layer-delta";
+  row.appendChild(delta);
+
+  layerStack.appendChild(row);
+  layerRows.push(row);
+}
+
+/* Render tool calls */
+function renderToolText(text, container) {
+  var parts = text.split(/(<<[^>]+>>)/g);
+  parts.forEach(function(part) {
+    if (part.startsWith("<<") && part.endsWith(">>")) {
+      var inner = part.slice(2, -2);
+      var eq = inner.indexOf("=");
+      if (eq > -1) {
+        var s1e = document.createElement("span");
+        s1e.className = "tool-expr";
+        s1e.textContent = inner.slice(0, eq);
+        container.appendChild(s1e);
+        container.appendChild(document.createTextNode(" = "));
+        var s2e = document.createElement("span");
+        s2e.className = "tool-out";
+        s2e.textContent = inner.slice(eq + 1);
+        container.appendChild(s2e);
+        container.appendChild(document.createTextNode(" "));
+      }
+    } else {
+      container.appendChild(document.createTextNode(part));
+    }
+  });
+}
+
+function tokDisplay(tok) {
+  var t = tok.text.replace(/\n/g, "\u21b5").replace(/\t/g, "\u21e5");
+  if (t.trim() === "" && t.length > 0) t = "\u00b7".repeat(t.length);
+  return t;
+}
+
+/* ── Left panel renderers ── */
+function renderData(data) {
+  s1.textContent = "";
+
+  var desc = document.createElement("div");
+  desc.style.cssText = "font-size:10px; color:" + data.color + "; font-family:var(--mono); margin-bottom:6px; opacity:0.7;";
+  desc.textContent = data.description + (data.subject ? " \u2022 " + data.subject : "");
+  s1.appendChild(desc);
+
+  data.messages.forEach(function(msg) {
+    var wrap = document.createElement("div");
+    wrap.className = "raw-msg";
+    var role = document.createElement("div");
+    role.className = "raw-role " + msg.role;
+    role.textContent = msg.role;
+    wrap.appendChild(role);
+    var text = document.createElement("div");
+    text.className = "raw-text " + msg.role;
+    renderToolText(msg.content, text);
+    wrap.appendChild(text);
+    s1.appendChild(wrap);
+  });
+
+  secData.classList.remove("hidden");
+  secData.classList.add("visible");
+}
+
+function renderMask(data) {
+  s2.textContent = "";
+
+  data.messages.forEach(function(msg) {
+    var wrap = document.createElement("div");
+    wrap.className = "mask-msg " + (msg.is_trainable ? "train-bg" : "masked-bg");
+
+    var label = document.createElement("div");
+    label.className = "mask-label " + (msg.is_trainable ? "on" : "off");
+    label.textContent = msg.is_trainable
+      ? "\u2713 " + msg.role + " \u2014 " + msg.token_count + " tokens \u2192 TRAIN"
+      : "\u2715 " + msg.role + " \u2014 " + msg.token_count + " tokens \u2192 MASKED";
+    wrap.appendChild(label);
+
+    var toks = document.createElement("div");
+    toks.className = "mask-tokens";
+    msg.tokens.forEach(function(tok) {
+      var el = document.createElement("span");
+      el.className = "mask-tok " + (msg.is_trainable ? "lit" : "dim");
+      el.textContent = tokDisplay(tok);
+      toks.appendChild(el);
+    });
+    wrap.appendChild(toks);
+    s2.appendChild(wrap);
+  });
+
+  secMask.classList.remove("hidden");
+  secMask.classList.add("visible");
+}
+
+function renderStats(data) {
+  s3.textContent = "";
+
+  var row = document.createElement("div");
+  row.className = "stats-row";
+
+  var items = [
+    [data.trainable_tokens, "trainable", "var(--accent)"],
+    [data.context_tokens, "masked", "var(--text-3)"],
+    [data.total_tokens, "total tokens", "var(--text-2)"],
+    [data.train_percent + "%", "train ratio", "var(--green)"],
+  ];
+  items.forEach(function(it) {
+    var item = document.createElement("div");
+    item.className = "stat-item";
+    var val = document.createElement("div");
+    val.className = "stat-val";
+    val.style.color = it[2];
+    val.textContent = it[0];
+    item.appendChild(val);
+    var lbl = document.createElement("div");
+    lbl.className = "stat-lbl";
+    lbl.textContent = it[1];
+    item.appendChild(lbl);
+    row.appendChild(item);
+  });
+  s3.appendChild(row);
+
+  /* Mask bar */
+  var bar = document.createElement("div");
+  bar.style.cssText = "height:10px; border-radius:5px; display:flex; overflow:hidden; gap:1px; margin-top:6px;";
+  var seg1 = document.createElement("div");
+  seg1.style.cssText = "height:100%; background:rgba(255,255,255,0.06); width:" + data.mask_percent + "%;";
+  bar.appendChild(seg1);
+  var seg2 = document.createElement("div");
+  seg2.style.cssText = "height:100%; background:var(--accent); width:" + data.train_percent + "%;";
+  bar.appendChild(seg2);
+  s3.appendChild(bar);
+
+  /* Learn line */
+  var learn = document.createElement("div");
+  learn.style.cssText = "font-size:10px; color:var(--text-3); margin-top:8px; font-style:italic;";
+  learn.textContent = "jllm learns: " + data.learns;
+  s3.appendChild(learn);
+
+  secStats.classList.remove("hidden");
+  secStats.classList.add("visible");
+}
+
+
+/* ── Right panel: network animation ── */
+function setPhase(text, color, bgAlpha) {
+  phaseText.textContent = text;
+  phaseText.style.color = color;
+  phaseText.style.background = color.replace(")", "," + (bgAlpha || 0.12) + ")").replace("rgb", "rgba");
+}
+
+function resetNetwork() {
+  layerRows.forEach(function(r) {
+    r.className = "layer-row";
+    r.querySelector(".layer-delta").textContent = "";
+    r.querySelector(".layer-delta").style.opacity = "0";
+  });
+  lossVal.classList.remove("show");
+  lossExplain.classList.remove("show");
+  resultText.classList.remove("show");
+}
+
+function animateNetwork(data) {
+  resetNetwork();
+  var timeouts = [];
+
+  /* Input display */
+  inputVal.textContent = data.trainable_tokens + " tokens";
+  inputDetail.textContent = data.context_tokens + " masked, " + data.trainable_tokens + " trainable";
+
+  /* ── Phase 1: Forward Pass (0ms - 1800ms) ── */
+  setPhase("\u2192 forward pass", "rgb(34,197,94)");
+
+  for (var i = 0; i < LAYERS; i++) {
+    (function(idx) {
+      /* Light up */
+      timeouts.push(setTimeout(function() {
+        layerRows[idx].className = "layer-row fwd";
+      }, idx * 55));
+      /* Dim to done */
+      timeouts.push(setTimeout(function() {
+        layerRows[idx].className = "layer-row fwd-done";
+      }, idx * 55 + 150));
+    })(i);
+  }
+
+  var fwdDone = LAYERS * 55 + 200;
+
+  /* ── Phase 2: Loss computation (fwdDone - fwdDone+1200ms) ── */
+  timeouts.push(setTimeout(function() {
+    setPhase("\u2716 computing loss", "rgb(236,72,153)");
+    lossVal.textContent = "loss on " + data.trainable_tokens + " tokens";
+    lossVal.classList.add("show");
+  }, fwdDone));
+
+  timeouts.push(setTimeout(function() {
+    lossExplain.classList.add("show");
+  }, fwdDone + 400));
+
+  var lossDone = fwdDone + 1000;
+
+  /* ── Phase 3: Backward Pass / Backpropagation (lossDone - lossDone+1800ms) ── */
+  timeouts.push(setTimeout(function() {
+    setPhase("\u2190 backpropagation", "rgb(168,85,247)");
+  }, lossDone));
+
+  for (var j = LAYERS - 1; j >= 0; j--) {
+    (function(idx) {
+      var delay = lossDone + (LAYERS - 1 - idx) * 55;
+      timeouts.push(setTimeout(function() {
+        layerRows[idx].className = "layer-row bwd";
+      }, delay));
+      timeouts.push(setTimeout(function() {
+        layerRows[idx].className = "layer-row bwd-done";
+      }, delay + 150));
+    })(j);
+  }
+
+  var bwdDone = lossDone + LAYERS * 55 + 200;
+
+  /* ── Phase 4: Weight Update (bwdDone - bwdDone+1500ms) ── */
+  timeouts.push(setTimeout(function() {
+    setPhase("\u21bb updating weights", "rgb(234,179,8)");
+
+    layerRows.forEach(function(row) {
+      row.className = "layer-row updating";
+      /* Show random tiny delta on each layer */
+      var deltaEl = row.querySelector(".layer-delta");
+      var sign = Math.random() > 0.5 ? "+" : "-";
+      var val = (Math.random() * 0.0009 + 0.0001).toFixed(4);
+      deltaEl.textContent = "\u0394" + sign + val;
+      deltaEl.style.color = "var(--yellow)";
+      deltaEl.style.opacity = "1";
+    });
+  }, bwdDone));
+
+  var updateDone = bwdDone + 1200;
+
+  /* ── Phase 5: Done ── */
+  timeouts.push(setTimeout(function() {
+    setPhase("\u2713 weights updated", "rgb(34,197,94)");
+
+    layerRows.forEach(function(row) {
+      row.className = "layer-row done";
+      row.querySelector(".layer-delta").style.opacity = "0";
+    });
+
+    resultText.textContent = "1.68B parameters nudged \u2192 jllm is slightly better at " + data.learns;
+    resultText.classList.add("show");
+  }, updateDone));
+
+  /* Return total animation time */
+  return updateDone + 1500;
+}
+
+
+/* ── Main loop ── */
+function clearAll() {
+  [secData, secMask, secStats].forEach(function(el) {
+    el.classList.remove("visible");
+    el.classList.add("hidden");
+  });
+  resetNetwork();
+}
+
+function fetchPipeline() {
+  if (!playing) return;
+
+  var url = filter ? (API + "/next/" + filter) : (API + "/next");
+
+  clearAll();
+
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      statusText.textContent = data.source + " \u2022 " + data.total_tokens + " tokens";
+      sourceBadge.textContent = data.source;
+      sourceBadge.style.background = data.color + "18";
+      sourceBadge.style.color = data.color;
+      servedCount.textContent = data.served;
+
+      /* Stagger left panel */
+      setTimeout(function() { renderData(data); }, 100);
+      setTimeout(function() { renderMask(data); }, 400);
+      setTimeout(function() { renderStats(data); }, 700);
+
+      /* Start network animation when mask is shown */
+      var animDuration = 0;
+      setTimeout(function() {
+        animDuration = animateNetwork(data);
+        /* Schedule next fetch after animation completes + pause */
+        var extraPause = Math.min(Math.max(data.total_tokens * 5, 2000), 5000);
+        animTimer = setTimeout(fetchPipeline, animDuration + extraPause - 700);
+      }, 800);
+    })
+    .catch(function() {
+      statusText.textContent = "connecting...";
+      setTimeout(fetchPipeline, 3000);
+    });
+}
+
+/* Start */
+fetchPipeline();
+
+/* Keyboard */
+document.addEventListener("keydown", function(e) {
+  if (e.key === " ") {
+    e.preventDefault();
+    playing = !playing;
+    if (!playing && animTimer) { clearTimeout(animTimer); animTimer = null; }
+    statusText.textContent = playing ? "resuming..." : "paused";
+    if (playing) fetchPipeline();
+  } else if (e.key === "n" || e.key === "N") {
+    if (animTimer) { clearTimeout(animTimer); animTimer = null; }
+    playing = true;
+    fetchPipeline();
+  } else if (sourceKeys[e.key]) {
+    var s = sourceKeys[e.key];
+    filter = (filter === s) ? null : s;
+    statusText.textContent = filter ? ("filter: " + filter) : "all sources";
+  }
+});
+</script>
+</body>
+</html>

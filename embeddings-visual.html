@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>How Embeddings Work — nanochat</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000; --surface: #0a0a0a; --card: #111; --border: #1f1f1f;
+    --text: #fff; --text-2: #999; --text-3: #555;
+    --accent: #a855f7; --accent2: #ec4899; --green: #22c55e; --blue: #3b82f6;
+    --mono: 'JetBrains Mono', monospace; --sans: 'Inter', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text-2); font-family: var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  .container { max-width: 920px; margin: 0 auto; padding: 60px 32px 140px; }
+  h1 { font-size: 48px; font-weight: 800; color: var(--text); letter-spacing: -1.5px; line-height: 1.1; margin-bottom: 12px; }
+  .subtitle { font-size: 18px; color: var(--text-3); font-weight: 400; margin-bottom: 64px; }
+
+  .scene { display: none; opacity: 0; transition: opacity 0.6s ease; }
+  .scene.active { display: block; }
+  .scene.visible { opacity: 1; }
+  .scene-label { font-size: 12px; text-transform: uppercase; letter-spacing: 3px; font-weight: 600; margin-bottom: 24px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .scene-heading { font-size: 32px; font-weight: 700; color: var(--text); margin-bottom: 16px; letter-spacing: -0.5px; }
+  .scene-desc { font-size: 16px; line-height: 1.8; color: var(--text-2); margin-bottom: 32px; max-width: 720px; }
+  .scene-desc strong { color: var(--text); font-weight: 600; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 20px; }
+  .card-glow { border: 1px solid transparent; background: linear-gradient(var(--card), var(--card)) padding-box, linear-gradient(135deg, rgba(168,85,247,0.25), rgba(236,72,153,0.25)) border-box; }
+
+  .stats { display: flex; gap: 16px; margin-bottom: 20px; }
+  .stat-box { flex: 1; text-align: center; padding: 24px; }
+  .stat-value { font-size: 48px; font-weight: 800; letter-spacing: -2px; }
+  .stat-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 2px; margin-top: 8px; }
+  .stat-purple .stat-value { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-blue .stat-value { color: var(--blue); }
+
+  .insight { background: linear-gradient(135deg, rgba(168,85,247,0.05), rgba(236,72,153,0.03)); border: 1px solid rgba(168,85,247,0.15); border-radius: 14px; padding: 24px 28px; margin-top: 24px; }
+  .insight-label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; font-weight: 600; margin-bottom: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .insight p { font-size: 15px; line-height: 1.8; color: var(--text-2); }
+  .insight p strong { color: var(--text); }
+
+  /* Lookup rows */
+  .lookup-row { display: flex; align-items: center; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); font-family: var(--mono); }
+  .lookup-row:last-child { border-bottom: none; }
+  .lookup-word { color: var(--accent); font-weight: 600; font-size: 17px; min-width: 80px; }
+  .lookup-arrow { color: var(--text-3); font-size: 14px; }
+  .lookup-id { color: var(--text-2); font-size: 14px; min-width: 90px; }
+  .lookup-vec { color: var(--green); font-size: 12px; word-break: break-all; }
+
+  /* Heatmap */
+  .heatmap { overflow-x: auto; }
+  .heat-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+  .heat-label { font-family: var(--mono); font-size: 14px; color: var(--text); width: 72px; text-align: right; padding-right: 12px; flex-shrink: 0; font-weight: 600; }
+  .heat-dim-label { font-family: var(--mono); font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1px; }
+  .heat-cell { width: 72px; height: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-family: var(--mono); color: rgba(255,255,255,0.7); flex-shrink: 0; transition: transform 0.2s; cursor: default; }
+  .heat-cell:hover { transform: scale(1.08); z-index: 1; }
+  .heat-spacer { width: 72px; flex-shrink: 0; }
+  .heat-bracket { font-size: 12px; color: var(--text-3); margin-top: 12px; text-align: center; font-family: var(--mono); }
+
+  /* Similarity bars */
+  .sim-row { display: flex; align-items: center; margin-bottom: 10px; }
+  .sim-label { font-family: var(--mono); font-size: 13px; color: var(--text-2); width: 140px; flex-shrink: 0; text-align: right; padding-right: 16px; }
+  .sim-bar-wrap { flex: 1; background: var(--surface); border-radius: 6px; height: 30px; overflow: hidden; position: relative; }
+  .sim-bar { height: 100%; border-radius: 6px; transition: width 1s ease; min-width: 2px; }
+  .sim-val { font-family: var(--mono); font-size: 13px; width: 64px; text-align: right; padding-left: 12px; flex-shrink: 0; }
+  .sim-pos { color: var(--accent); }
+  .sim-neg { color: var(--blue); }
+  .sim-highlight .sim-label { color: var(--text); font-weight: 600; }
+
+  /* PCA canvas */
+  .pca-wrap { border-radius: 14px; overflow: hidden; }
+  .pca-canvas { display: block; width: 100%; border-radius: 14px; }
+
+  /* Pipeline */
+  .pipeline { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+  .pipe-step { border-radius: 12px; padding: 18px 16px; text-align: center; min-width: 90px; flex: 1; }
+  .pipe-done { background: var(--card); border: 1px solid var(--border); }
+  .pipe-current { border: 1px solid transparent; background: linear-gradient(var(--card), var(--card)) padding-box, linear-gradient(135deg, rgba(168,85,247,0.4), rgba(236,72,153,0.4)) border-box; }
+  .pipe-next { background: var(--surface); border: 1px dashed #2a2a2a; opacity: 0.5; }
+  .pipe-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .pipe-detail { font-size: 10px; color: var(--text-3); line-height: 1.4; }
+  .pipe-status { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 8px; font-weight: 600; }
+  .pipe-status-done { color: var(--green); }
+  .pipe-status-now { color: var(--accent); }
+  .pipe-status-next { color: var(--text-3); }
+  .pipe-arrow { color: var(--text-3); font-size: 18px; display: flex; align-items: center; padding: 0 6px; flex-shrink: 0; }
+
+  /* Controls */
+  .controls { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.92); border-top: 1px solid var(--border); padding: 20px 32px; display: flex; align-items: center; justify-content: center; gap: 20px; z-index: 100; backdrop-filter: blur(24px); }
+  .btn { padding: 12px 32px; border-radius: 10px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: var(--sans); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn-secondary { background: var(--card); color: var(--text-2); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: #1a1a1a; color: var(--text); }
+  .btn:disabled { opacity: 0.2; cursor: not-allowed; transform: none; }
+  .step-indicator { font-size: 13px; color: var(--text-3); min-width: 120px; text-align: center; }
+  .spacer { height: 120px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>How Embeddings Work</h1>
+  <p class="subtitle">How token IDs become vectors the neural network can think with</p>
+
+  <!-- SCENE 1: The Lookup Table -->
+  <div class="scene active" id="scene0">
+    <div class="scene-label">Scene 1 of 5</div>
+    <div class="scene-heading">Every token gets a vector</div>
+    <div class="scene-desc">The model stores a giant table: one row for each of its 32,768 tokens. Each row is a vector of <strong>1,664 numbers</strong>. When a token enters the model, its ID is used to look up the corresponding row. That vector becomes the token's identity inside the network.</div>
+    <div class="stats">
+      <div class="card stat-box stat-purple"><div class="stat-value">32,768</div><div class="stat-label">Vocabulary Size</div></div>
+      <div class="card stat-box stat-purple"><div class="stat-value">1,664</div><div class="stat-label">Dimensions</div></div>
+      <div class="card stat-box stat-blue"><div class="stat-value">54.5M</div><div class="stat-label">Parameters</div></div>
+    </div>
+    <div class="card card-glow" id="lookup-demo"></div>
+    <div class="insight">
+      <div class="insight-label">Insight</div>
+      <p>The embedding table alone holds <strong>54.5 million numbers</strong> (32,768 x 1,664). That is 3.2% of your model's 1.68 billion parameters, dedicated entirely to giving each token its starting identity. These values are learned during training. No human chose them.</p>
+    </div>
+  </div>
+
+  <!-- SCENE 2: Heatmap -->
+  <div class="scene" id="scene1">
+    <div class="scene-label">Scene 2 of 5</div>
+    <div class="scene-heading">Every word has a fingerprint</div>
+    <div class="scene-desc">Here are the <strong>first 8 dimensions</strong> (out of 1,664) for 8 words from your trained model. Purple means positive, blue means negative, darker means closer to zero. Each word has a completely unique pattern.</div>
+    <div class="card card-glow" id="heatmap-container"></div>
+    <div class="insight">
+      <div class="insight-label">Look Closely</div>
+      <p>Compare <strong>"The" and "the"</strong>: their patterns are strikingly similar (both negative in dims 2-4, both positive in dim 5). That makes sense, they are the same word. Now compare <strong>"cat" and "dog"</strong>: their patterns are almost opposite. Dim 0 is +13 vs -12. Dim 5 is +33 vs -33. The model does not yet know they are related. That understanding comes later.</p>
+    </div>
+  </div>
+
+  <!-- SCENE 3: Cosine Similarity -->
+  <div class="scene" id="scene2">
+    <div class="scene-label">Scene 3 of 5</div>
+    <div class="scene-heading">The similarity surprise</div>
+    <div class="scene-desc">Cosine similarity measures how much two vectors point in the same direction. A value of 1.0 means identical, 0.0 means unrelated, and negative means opposing. Look what happens when we measure similarity in the raw embedding table:</div>
+    <div class="card card-glow" id="sim-chart"></div>
+    <div class="insight">
+      <div class="insight-label">Why Is This Surprising?</div>
+      <p>Cat and dog have <strong>zero similarity</strong>. Man and woman are slightly <strong>negative</strong>. Good and great are <strong>opposites</strong>. Only "The" and "the" show real similarity (0.77), because they are literally the same word with different capitalization. These are the <strong>raw input embeddings</strong>. They are a learned coordinate system, not a map of meaning. The semantic understanding, knowing that cats and dogs are both animals, emerges through the 26 transformer layers and attention mechanism. The embedding table is where the journey <strong>begins</strong>, not where meaning lives.</p>
+    </div>
+  </div>
+
+  <!-- SCENE 4: PCA -->
+  <div class="scene" id="scene3">
+    <div class="scene-label">Scene 4 of 5</div>
+    <div class="scene-heading">The landscape of vectors</div>
+    <div class="scene-desc">We can compress 1,664 dimensions down to 2 using PCA (Principal Component Analysis) to see the layout. In word2vec, you would see tight clusters: animals together, colors together. In transformer input embeddings, the landscape is more scattered. <strong>The clustering happens deeper in the network.</strong></div>
+    <div class="card card-glow pca-wrap"><canvas id="pca-canvas" class="pca-canvas"></canvas></div>
+    <div class="insight">
+      <div class="insight-label">What This Means</div>
+      <p>The embedding table is like a <strong>random starting position</strong> for each token. During training, the model learns to arrange tokens in this 1,664-dimensional space so that the transformer layers can most effectively process them. The arrangement is not about "meaning" but about what makes prediction easiest. The 26 transformer layers take these scattered vectors and, through attention, create rich contextual representations where "cat" and "dog" finally become related.</p>
+    </div>
+  </div>
+
+  <!-- SCENE 5: Pipeline -->
+  <div class="scene" id="scene4">
+    <div class="scene-label">Scene 5 of 5</div>
+    <div class="scene-heading">The pipeline so far</div>
+    <div class="scene-desc">You have now seen the full journey from raw text to the vectors that enter the neural network. Two lessons down. The biggest piece is still ahead: <strong>what happens inside the transformer layers?</strong></div>
+    <div class="card card-glow" id="pipeline-container"></div>
+    <div class="insight">
+      <div class="insight-label">Coming Next: Attention</div>
+      <p>The transformer's secret weapon is <strong>attention</strong>: a mechanism that lets every token look at every other token and decide what information to absorb. Through 26 rounds of this, the scattered embedding vectors transform into rich, contextualized representations. The word "bank" next to "river" ends up in a completely different place than "bank" next to "money." That is where the real magic happens.</p>
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+</div>
+
+<div class="controls">
+  <button class="btn btn-secondary" id="prevBtn" disabled>Back</button>
+  <div class="step-indicator" id="stepIndicator">Scene 1 of 5</div>
+  <button class="btn btn-primary" id="nextBtn">Next</button>
+</div>
+
+<script>
+/* ── Data from your trained model ── */
+var WORDS = [
+  {w:"The",id:449,d:[6.62,7.5,-21.0,-25.38,-11.19,22.75,35.0,-21.25]},
+  {w:"the",id:261,d:[6.12,1.62,-26.0,-20.0,-15.06,30.0,22.75,-37.0]},
+  {w:"cat",id:14261,d:[13.0,4.38,34.5,-7.44,-14.12,33.25,7.0,-21.12]},
+  {w:"dog",id:9499,d:[-12.0,0.06,24.5,14.19,-6.16,-33.25,-10.06,12.94]},
+  {w:"man",id:493,d:[-17.62,4.03,-9.56,-6.75,6.12,-7.72,10.56,1.73]},
+  {w:"woman",id:3400,d:[10.56,1.68,3.69,9.94,22.12,-1.09,-13.0,1.09]},
+  {w:"good",id:8930,d:[7.53,-0.86,-7.78,-13.62,8.94,-34.0,-0.42,19.12]},
+  {w:"bad",id:4430,d:[11.5,10.44,-2.03,18.5,1.52,-15.88,-21.12,-3.86]}
+];
+
+var SIMS = [
+  {w1:"The",w2:"the",s:0.770},{w1:"new",w2:"old",s:0.132},
+  {w1:"good",w2:"bad",s:0.094},{w1:"king",w2:"man",s:0.093},
+  {w1:"day",w2:"work",s:0.093},{w1:"love",w2:"food",s:0.087},
+  {w1:"big",w2:"small",s:0.072},{w1:"water",w2:"food",s:0.056},
+  {w1:"black",w2:"white",s:0.038},{w1:"cat",w2:"work",s:0.028},
+  {w1:"cat",w2:"king",s:0.019},{w1:"cat",w2:"dog",s:0.000},
+  {w1:"man",w2:"woman",s:-0.013},{w1:"red",w2:"black",s:-0.027},
+  {w1:"good",w2:"great",s:-0.053}
+];
+
+var PCA = [
+  {w:"The",x:-238.94,y:-68.58},{w:"the",x:-152.74,y:-30.17},
+  {w:"cat",x:-75.4,y:-131.01},{w:"dog",x:245.66,y:-57.95},
+  {w:"man",x:-219.26,y:54.39},{w:"woman",x:116.7,y:-72.23},
+  {w:"good",x:45.5,y:-126.16},{w:"great",x:-59.27,y:-364.58},
+  {w:"bad",x:329.0,y:-9.06},{w:"big",x:95.26,y:31.42},
+  {w:"small",x:-114.06,y:48.41},{w:"work",x:155.09,y:-53.87},
+  {w:"day",x:-252.68,y:-224.65},{w:"new",x:-56.93,y:116.84},
+  {w:"old",x:-177.55,y:114.38},{w:"black",x:-14.24,y:153.14},
+  {w:"white",x:334.44,y:25.44},{w:"red",x:-90.99,y:344.92},
+  {w:"king",x:134.02,y:-179.04},{w:"water",x:234.86,y:105.93},
+  {w:"food",x:-0.78,y:53.87},{w:"love",x:-15.87,y:274.47},
+  {w:"is",x:-122.42,y:4.49},{w:"of",x:-99.4,y:-10.4}
+];
+
+/* ── Navigation ── */
+var cur = 0, total = 5;
+function $(id) { return document.getElementById(id); }
+
+function show(n) {
+  for (var i = 0; i < total; i++) { var s = $("scene"+i); s.classList.remove("active","visible"); }
+  var sc = $("scene"+n); sc.classList.add("active");
+  setTimeout(function(){ sc.classList.add("visible"); }, 50);
+  if (n===0) buildLookup(); if (n===1) buildHeatmap();
+  if (n===2) buildSimilarity(); if (n===3) buildPCA(); if (n===4) buildPipeline();
+  $("prevBtn").disabled = (n===0);
+  $("nextBtn").textContent = (n===total-1) ? "Restart" : "Next";
+  $("stepIndicator").textContent = "Scene "+(n+1)+" of "+total;
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+$("nextBtn").addEventListener("click", function(){
+  if (cur<total-1){cur++;show(cur);} else {cur=0;show(0);}
+});
+$("prevBtn").addEventListener("click", function(){
+  if (cur>0){cur--;show(cur);}
+});
+document.addEventListener("keydown", function(e){
+  if (e.key==="ArrowRight"||e.key===" "){e.preventDefault();$("nextBtn").click();}
+  if (e.key==="ArrowLeft"){e.preventDefault();$("prevBtn").click();}
+});
+
+/* ── Scene 1: Lookup Table ── */
+function buildLookup() {
+  var box = $("lookup-demo"); box.textContent = "";
+  var show3 = [WORDS[2], WORDS[3], WORDS[4]]; // cat, dog, man
+  show3.forEach(function(w, wi) {
+    var row = document.createElement("div"); row.className = "lookup-row";
+    row.style.opacity = "0"; row.style.transform = "translateY(12px)";
+    row.style.transition = "all 0.6s ease " + (wi * 0.4) + "s";
+
+    var word = document.createElement("span"); word.className = "lookup-word";
+    word.textContent = '"' + w.w + '"'; row.appendChild(word);
+    var a1 = document.createElement("span"); a1.className = "lookup-arrow";
+    a1.textContent = "\u2192"; row.appendChild(a1);
+    var id = document.createElement("span"); id.className = "lookup-id";
+    id.textContent = "ID " + w.id; row.appendChild(id);
+    var a2 = document.createElement("span"); a2.className = "lookup-arrow";
+    a2.textContent = "\u2192"; row.appendChild(a2);
+    var vec = document.createElement("span"); vec.className = "lookup-vec";
+    vec.textContent = "[" + w.d.map(function(v){return v.toFixed(1);}).join(", ") + ", ... 1656 more]";
+    row.appendChild(vec);
+
+    box.appendChild(row);
+    setTimeout(function(){ row.style.opacity="1"; row.style.transform="translateY(0)"; }, 100);
+  });
+}
+
+/* ── Scene 2: Heatmap ── */
+function valToColor(v) {
+  var cap = 45, n = Math.max(-1, Math.min(1, v / cap));
+  if (n < 0) {
+    var t = Math.abs(n);
+    return "rgba(59,130,246," + (t * 0.75 + 0.08) + ")";
+  }
+  var t = n;
+  return "rgba(168,85,247," + (t * 0.75 + 0.08) + ")";
+}
+
+function buildHeatmap() {
+  var box = $("heatmap-container"); box.textContent = "";
+  var hm = document.createElement("div"); hm.className = "heatmap";
+
+  // Header row
+  var hdr = document.createElement("div"); hdr.className = "heat-row";
+  var blank = document.createElement("div"); blank.className = "heat-label"; blank.textContent = "";
+  hdr.appendChild(blank);
+  for (var d = 0; d < 8; d++) {
+    var dLabel = document.createElement("div");
+    dLabel.className = "heat-cell heat-dim-label";
+    dLabel.textContent = "dim " + d;
+    dLabel.style.background = "none";
+    hdr.appendChild(dLabel);
+  }
+  hm.appendChild(hdr);
+
+  WORDS.forEach(function(w, wi) {
+    var row = document.createElement("div"); row.className = "heat-row";
+    row.style.opacity = "0"; row.style.transition = "opacity 0.5s ease " + (wi * 0.15) + "s";
+    var label = document.createElement("div"); label.className = "heat-label";
+    label.textContent = w.w; row.appendChild(label);
+
+    w.d.forEach(function(v) {
+      var cell = document.createElement("div"); cell.className = "heat-cell";
+      cell.style.background = valToColor(v);
+      cell.textContent = v > 0 ? "+" + v.toFixed(0) : v.toFixed(0);
+      cell.title = w.w + " dim: " + v.toFixed(2);
+      row.appendChild(cell);
+    });
+    hm.appendChild(row);
+    setTimeout(function(){ row.style.opacity = "1"; }, 100);
+  });
+
+  var note = document.createElement("div"); note.className = "heat-bracket";
+  note.textContent = "\u2190 8 of 1,664 dimensions shown \u2192";
+  hm.appendChild(note);
+  box.appendChild(hm);
+}
+
+/* ── Scene 3: Similarity Chart ── */
+function buildSimilarity() {
+  var box = $("sim-chart"); box.textContent = "";
+  var maxSim = 0.77;
+
+  SIMS.forEach(function(s, si) {
+    var row = document.createElement("div"); row.className = "sim-row";
+    if (si === 0) row.classList.add("sim-highlight");
+    row.style.opacity = "0"; row.style.transform = "translateX(-10px)";
+    row.style.transition = "all 0.4s ease " + (si * 0.12) + "s";
+
+    var label = document.createElement("div"); label.className = "sim-label";
+    label.textContent = s.w1 + " / " + s.w2; row.appendChild(label);
+
+    var barWrap = document.createElement("div"); barWrap.className = "sim-bar-wrap";
+    var bar = document.createElement("div"); bar.className = "sim-bar";
+    var pct = Math.max(0, s.s / maxSim) * 100;
+    bar.style.width = "0%";
+    if (s.s >= 0) {
+      bar.style.background = "linear-gradient(90deg, var(--accent), var(--accent2))";
+    } else {
+      bar.style.background = "var(--blue)";
+      pct = Math.abs(s.s) / maxSim * 100;
+    }
+    barWrap.appendChild(bar); row.appendChild(barWrap);
+
+    var val = document.createElement("div");
+    val.className = "sim-val " + (s.s >= 0 ? "sim-pos" : "sim-neg");
+    val.textContent = (s.s >= 0 ? "+" : "") + s.s.toFixed(3);
+    row.appendChild(val);
+
+    box.appendChild(row);
+    setTimeout(function(){
+      row.style.opacity = "1"; row.style.transform = "translateX(0)";
+      bar.style.width = pct + "%";
+    }, 200);
+  });
+}
+
+/* ── Scene 4: PCA Scatter Plot ── */
+function buildPCA() {
+  var canvas = $("pca-canvas");
+  var dpr = window.devicePixelRatio || 1;
+  var W = 856, H = 520;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + "px"; canvas.style.height = H + "px";
+  var ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  var pad = 50;
+  var minX = -280, maxX = 360, minY = -390, maxY = 370;
+  function mx(x){ return pad + ((x - minX) / (maxX - minX)) * (W - 2*pad); }
+  function my(y){ return H - pad - ((y - minY) / (maxY - minY)) * (H - 2*pad); }
+
+  // Background
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = "#1a1a1a"; ctx.lineWidth = 1;
+  for (var gx = -200; gx <= 300; gx += 100) {
+    ctx.beginPath(); ctx.moveTo(mx(gx), pad); ctx.lineTo(mx(gx), H-pad); ctx.stroke();
+  }
+  for (var gy = -300; gy <= 300; gy += 100) {
+    ctx.beginPath(); ctx.moveTo(pad, my(gy)); ctx.lineTo(W-pad, my(gy)); ctx.stroke();
+  }
+
+  // Axes through zero
+  ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(mx(minX), my(0)); ctx.lineTo(mx(maxX), my(0)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(mx(0), my(minY)); ctx.lineTo(mx(0), my(maxY)); ctx.stroke();
+
+  // Axis labels
+  ctx.fillStyle = "#555"; ctx.font = "11px Inter"; ctx.textAlign = "center";
+  ctx.fillText("PC1", W/2, H - 12);
+  ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText("PC2", 0, 0); ctx.restore();
+
+  // Draw dots with animation delay
+  PCA.forEach(function(p, i) {
+    setTimeout(function() {
+      var px = mx(p.x), py = my(p.y);
+
+      // Glow
+      var grad = ctx.createRadialGradient(px, py, 0, px, py, 16);
+      grad.addColorStop(0, "rgba(168,85,247,0.3)");
+      grad.addColorStop(1, "rgba(168,85,247,0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(px, py, 16, 0, Math.PI*2); ctx.fill();
+
+      // Dot
+      ctx.beginPath(); ctx.arc(px, py, 4.5, 0, Math.PI*2);
+      ctx.fillStyle = "#a855f7"; ctx.fill();
+
+      // Label
+      ctx.fillStyle = "#e0e0e0"; ctx.font = "600 12px Inter"; ctx.textAlign = "center";
+      ctx.fillText(p.w, px, py - 11);
+    }, i * 80);
+  });
+}
+
+/* ── Scene 5: Pipeline ── */
+function buildPipeline() {
+  var box = $("pipeline-container"); box.textContent = "";
+  var pipe = document.createElement("div"); pipe.className = "pipeline";
+
+  var steps = [
+    {name:"Raw Text", detail:"Training data", status:"done", cls:"pipe-done"},
+    {name:"Tokenizer", detail:"BPE, 32K vocab", status:"done", cls:"pipe-done"},
+    {name:"Token IDs", detail:"[449, 6938, ...]", status:"done", cls:"pipe-done"},
+    {name:"Embeddings", detail:"32,768 \u00d7 1,664", status:"now", cls:"pipe-current"},
+    {name:"Vectors", detail:"1,664-dim each", status:"now", cls:"pipe-current"},
+    {name:"Transformer", detail:"\u00d726 layers", status:"next", cls:"pipe-next"},
+    {name:"Prediction", detail:"Next token", status:"next", cls:"pipe-next"}
+  ];
+
+  steps.forEach(function(st, si) {
+    if (si > 0) {
+      var arrow = document.createElement("div"); arrow.className = "pipe-arrow";
+      arrow.textContent = "\u2192"; pipe.appendChild(arrow);
+    }
+    var step = document.createElement("div");
+    step.className = "pipe-step " + st.cls;
+    step.style.opacity = "0"; step.style.transition = "opacity 0.5s ease " + (si * 0.2) + "s";
+
+    var name = document.createElement("div"); name.className = "pipe-name";
+    name.textContent = st.name; step.appendChild(name);
+    var detail = document.createElement("div"); detail.className = "pipe-detail";
+    detail.textContent = st.detail; step.appendChild(detail);
+    var status = document.createElement("div");
+    var scls = st.status === "done" ? "pipe-status-done" : (st.status === "now" ? "pipe-status-now" : "pipe-status-next");
+    status.className = "pipe-status " + scls;
+    status.textContent = st.status === "done" ? "Lesson 1" : (st.status === "now" ? "This Lesson" : "Up Next");
+    step.appendChild(status);
+
+    pipe.appendChild(step);
+    setTimeout(function(){ step.style.opacity = "1"; }, 100);
+  });
+
+  box.appendChild(pipe);
+}
+
+/* ── Init ── */
+show(0);
+</script>
+</body>
+</html>

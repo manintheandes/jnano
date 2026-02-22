@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>How Tokenization Works — nanochat</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000; --surface: #0a0a0a; --card: #111; --border: #1f1f1f;
+    --text: #fff; --text-2: #999; --text-3: #555;
+    --accent: #a855f7; --accent2: #ec4899; --green: #22c55e; --blue: #3b82f6;
+    --mono: 'JetBrains Mono', monospace; --sans: 'Inter', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text-2); font-family: var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  .container { max-width: 880px; margin: 0 auto; padding: 60px 32px 140px; }
+  h1 { font-size: 48px; font-weight: 800; color: var(--text); letter-spacing: -1.5px; line-height: 1.1; margin-bottom: 12px; }
+  .subtitle { font-size: 18px; color: var(--text-3); font-weight: 400; margin-bottom: 64px; }
+
+  .scene { display: none; opacity: 0; transition: opacity 0.6s ease; }
+  .scene.active { display: block; }
+  .scene.visible { opacity: 1; }
+  .scene-label { font-size: 12px; text-transform: uppercase; letter-spacing: 3px; font-weight: 600; margin-bottom: 24px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .scene-heading { font-size: 32px; font-weight: 700; color: var(--text); margin-bottom: 16px; letter-spacing: -0.5px; }
+  .scene-desc { font-size: 16px; line-height: 1.8; color: var(--text-2); margin-bottom: 32px; max-width: 720px; }
+  .scene-desc strong { color: var(--text); font-weight: 600; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; margin-bottom: 20px; }
+  .card-glow { border: 1px solid transparent; background: linear-gradient(var(--card), var(--card)) padding-box, linear-gradient(135deg, rgba(168,85,247,0.25), rgba(236,72,153,0.25)) border-box; }
+  .text-display { font-family: var(--mono); font-size: 17px; line-height: 2.2; min-height: 60px; }
+
+  .char-box { display: inline-block; padding: 4px 2px; border-radius: 4px; transition: all 0.3s; position: relative; cursor: default; }
+  .char-box.highlight { background: rgba(168,85,247,0.15); color: var(--accent); }
+  .char-box .byte-val {
+    position: absolute; top: -24px; left: 50%; transform: translateX(-50%);
+    font-size: 10px; color: var(--accent); white-space: nowrap; opacity: 0;
+    transition: opacity 0.3s; background: #1a1a1a; padding: 2px 8px;
+    border-radius: 6px; border: 1px solid var(--border);
+  }
+  .char-box.show-bytes .byte-val { opacity: 1; }
+
+  .token-container { display: flex; flex-wrap: wrap; gap: 10px; }
+  .token-box {
+    display: inline-flex; flex-direction: column; align-items: center;
+    padding: 14px 18px; border-radius: 12px; font-family: var(--mono);
+    opacity: 0; transform: translateY(10px); transition: all 0.5s ease;
+  }
+  .token-box.visible { opacity: 1; transform: translateY(0); }
+  .token-text { font-size: 15px; color: var(--text); font-weight: 600; }
+  .token-id { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+
+  .merge-step {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 28px; margin-bottom: 14px;
+    opacity: 0; transform: translateX(-16px); transition: all 0.5s ease;
+  }
+  .merge-step.visible { opacity: 1; transform: translateX(0); }
+  .step-num { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 2px; font-weight: 600; margin-bottom: 10px; }
+  .merge-pair { font-family: var(--mono); font-size: 17px; color: var(--text); margin-bottom: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .merge-old { color: var(--accent); text-decoration: line-through; opacity: 0.5; }
+  .merge-arrow { color: var(--text-3); margin: 0 6px; }
+  .merge-new { color: var(--green); font-weight: 700; }
+  .merge-info { color: var(--text-3); font-size: 13px; margin-left: 12px; }
+  .merge-count { font-size: 13px; color: var(--text-3); margin-bottom: 12px; }
+  .merge-result {
+    font-family: var(--mono); font-size: 14px; color: var(--blue);
+    padding: 14px; background: var(--bg); border-radius: 10px; line-height: 2; letter-spacing: 1px;
+  }
+  .merged { background: rgba(34,197,94,0.1); color: var(--green); padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(34,197,94,0.2); }
+
+  .stats { display: flex; gap: 16px; margin-bottom: 20px; }
+  .stat-box { flex: 1; text-align: center; padding: 24px; }
+  .stat-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px; }
+  .stat-value { font-size: 52px; font-weight: 800; letter-spacing: -2px; }
+  .stat-detail { font-size: 13px; color: var(--text-3); margin-top: 4px; }
+  .stat-purple .stat-value { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-green .stat-value { color: var(--green); }
+  .stat-blue .stat-value { color: var(--blue); }
+
+  .insight {
+    background: linear-gradient(135deg, rgba(168,85,247,0.05), rgba(236,72,153,0.03));
+    border: 1px solid rgba(168,85,247,0.15); border-radius: 14px;
+    padding: 24px 28px; margin-top: 24px;
+  }
+  .insight-label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; font-weight: 600; margin-bottom: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .insight p { font-size: 15px; line-height: 1.8; color: var(--text-2); }
+  .insight p strong { color: var(--text); }
+
+  .controls {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.92); border-top: 1px solid var(--border);
+    padding: 20px 32px; display: flex; align-items: center;
+    justify-content: center; gap: 20px; z-index: 100; backdrop-filter: blur(24px);
+  }
+  .btn { padding: 12px 32px; border-radius: 10px; border: none; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: var(--sans); }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn-secondary { background: var(--card); color: var(--text-2); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: #1a1a1a; color: var(--text); }
+  .btn:disabled { opacity: 0.2; cursor: not-allowed; transform: none; }
+  .step-indicator { font-size: 13px; color: var(--text-3); min-width: 120px; text-align: center; }
+
+  .tc0 { background: rgba(168,85,247,0.13); border: 1px solid rgba(168,85,247,0.3); }
+  .tc1 { background: rgba(236,72,153,0.13); border: 1px solid rgba(236,72,153,0.3); }
+  .tc2 { background: rgba(59,130,246,0.13); border: 1px solid rgba(59,130,246,0.3); }
+  .tc3 { background: rgba(245,158,11,0.13); border: 1px solid rgba(245,158,11,0.3); }
+  .tc4 { background: rgba(34,197,94,0.13); border: 1px solid rgba(34,197,94,0.3); }
+  .tc5 { background: rgba(6,182,212,0.13); border: 1px solid rgba(6,182,212,0.3); }
+  .tc6 { background: rgba(244,63,94,0.13); border: 1px solid rgba(244,63,94,0.3); }
+  .tc7 { background: rgba(139,92,246,0.13); border: 1px solid rgba(139,92,246,0.3); }
+
+  .ids-display { font-family: var(--mono); font-size: 24px; text-align: center; letter-spacing: 3px; }
+  .id-span { transition: opacity 0.5s; }
+
+  .window-box h3 { font-size: 14px; color: var(--text-3); margin-bottom: 16px; font-weight: 500; }
+  .window-row { display: flex; align-items: center; margin-bottom: 18px; }
+  .window-label { font-size: 13px; width: 110px; flex-shrink: 0; }
+  .bar-outer { flex: 1; background: var(--card); border-radius: 8px; height: 36px; overflow: hidden; position: relative; }
+  .bar-inner { height: 100%; border-radius: 8px; transition: width 1.5s ease; }
+  .bar-text { position: absolute; top: 50%; left: 14px; transform: translateY(-50%); font-size: 12px; color: #fff; font-weight: 600; }
+
+  .spacer { height: 120px; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .cursor { animation: blink 1s infinite; color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>How Tokenization Works</h1>
+  <p class="subtitle">From raw text to the numbers your LLM actually sees</p>
+
+  <div class="scene active" id="scene0">
+    <div class="scene-label">Scene 1 of 5</div>
+    <div class="scene-heading">This is your training data</div>
+    <div class="scene-desc">One page from 370 data shards, pulled from FineWeb. This is the first document your model will ever read. Just a random webpage about shipping logistics.</div>
+    <div class="card card-glow"><div class="text-display" id="raw-text"></div></div>
+    <div class="insight">
+      <div class="insight-label">Insight</div>
+      <p>Your 33GB of training data contains roughly 6.6 billion words from millions of web pages. Not curated. Not labeled. Just the internet. The model learns grammar, facts, and reasoning from this raw text alone.</p>
+    </div>
+  </div>
+
+  <div class="scene" id="scene1">
+    <div class="scene-label">Scene 2 of 5</div>
+    <div class="scene-heading">But computers see numbers, not letters</div>
+    <div class="scene-desc">Every character maps to a byte value (0-255). Hover over any character to see its number. This is all a computer sees: a long sequence of numbers.</div>
+    <div class="card card-glow" style="padding-top: 36px;"><div class="text-display" id="byte-text"></div></div>
+    <div class="stats">
+      <div class="card stat-box stat-purple"><div class="stat-label">Characters</div><div class="stat-value">92</div><div class="stat-detail">one byte each</div></div>
+      <div class="card stat-box stat-purple"><div class="stat-label">Sequence Length</div><div class="stat-value">92</div><div class="stat-detail">positions to process</div></div>
+    </div>
+    <div class="insight">
+      <div class="insight-label">The Problem</div>
+      <p>The model reads text through a fixed window of <strong>2,048 positions</strong>. At byte level, that is only ~330 words. The word "transportation" alone eats 14 positions. We need to compress.</p>
+    </div>
+  </div>
+
+  <div class="scene" id="scene2">
+    <div class="scene-label">Scene 3 of 5</div>
+    <div class="scene-heading">BPE: Learning to merge</div>
+    <div class="scene-desc">Byte Pair Encoding scans billions of characters and asks one question, over and over: <strong>"Which two adjacent pieces appear together most often?"</strong> Then it merges them. Watch it work on "the cat sat on the mat":</div>
+    <div id="bpe-steps"></div>
+    <div class="insight" style="margin-top: 24px;">
+      <div class="insight-label">Insight</div>
+      <p>BPE is a compression algorithm. Common words like "the" become single tokens fast. Rare words stay as smaller pieces. Your nanochat tokenizer did <strong>32,768 merges</strong> on 2 billion characters of real text. It never fails on unknown words because it can always fall back to individual bytes.</p>
+    </div>
+  </div>
+
+  <div class="scene" id="scene3">
+    <div class="scene-label">Scene 4 of 5</div>
+    <div class="scene-heading">Your tokenizer: 32,768 merges later</div>
+    <div class="scene-desc">After training on 2 billion characters, your tokenizer learned a vocabulary of 32,768 tokens. Common words become single tokens. Here is the same sentence, tokenized:</div>
+    <div class="card card-glow"><div class="token-container" id="real-tokens"></div></div>
+    <div class="stats">
+      <div class="card stat-box stat-purple"><div class="stat-label">As Bytes</div><div class="stat-value">92</div><div class="stat-detail">positions</div></div>
+      <div class="card stat-box stat-green"><div class="stat-label">As Tokens</div><div class="stat-value">14</div><div class="stat-detail">positions</div></div>
+      <div class="card stat-box stat-blue"><div class="stat-label">Compression</div><div class="stat-value">6.6x</div><div class="stat-detail">more context fits</div></div>
+    </div>
+    <div class="insight">
+      <div class="insight-label">Why This Matters</div>
+      <p><strong>"transportation"</strong> is 14 bytes but just 1 token. The whole sentence compresses from 92 to 14 positions. The model's 2,048-token window now holds ~2,100 words instead of ~330. More context means better understanding. That is the entire reason tokenizers exist.</p>
+    </div>
+  </div>
+
+  <div class="scene" id="scene4">
+    <div class="scene-label">Scene 5 of 5</div>
+    <div class="scene-heading">This is what the model actually sees</div>
+    <div class="scene-desc">Not letters. Not words. A sequence of token IDs. Each one becomes a <strong>1,664-dimensional vector</strong> as it enters the neural network.</div>
+    <div class="card card-glow"><div class="ids-display" id="final-ids"></div></div>
+    <div class="card" style="margin-top: 20px;">
+      <h3 style="font-size:14px;color:var(--text-3);margin-bottom:16px;font-weight:500;">The model's 2,048-position window</h3>
+      <div class="window-row">
+        <div class="window-label" style="color:var(--accent);">Byte level</div>
+        <div class="bar-outer"><div class="bar-inner" id="byte-bar" style="width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));"></div><div class="bar-text">~330 words</div></div>
+      </div>
+      <div class="window-row">
+        <div class="window-label" style="color:var(--green);">Token level</div>
+        <div class="bar-outer"><div class="bar-inner" id="token-bar" style="width:0%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div><div class="bar-text">~2,100 words</div></div>
+      </div>
+    </div>
+    <div class="insight" style="margin-top: 24px;">
+      <div class="insight-label">The Journey</div>
+      <p>Text to Bytes to Tokens to IDs. Each of these 14 numbers gets looked up in an <strong>embedding table (32,768 x 1,664)</strong> to become a rich vector. Then 26 Transformer layers let these vectors talk to each other through attention. The model predicts: what token comes next? Get it wrong. Learn. Repeat 7.6 billion times. That is how your model went from random noise to GPT-2 level in 2.5 hours.</p>
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+</div>
+
+<div class="controls">
+  <button class="btn btn-secondary" id="prevBtn" disabled>Back</button>
+  <div class="step-indicator" id="stepIndicator">Scene 1 of 5</div>
+  <button class="btn btn-primary" id="nextBtn">Next</button>
+</div>
+
+<script>
+var SENTENCE = "The mode of transportation is an important consideration when planning the shipment process.";
+var TOKENS = [
+  {text:"The",id:449},{text:"\u00b7mode",id:6938},{text:"\u00b7of",id:281},
+  {text:"\u00b7transportation",id:6244},{text:"\u00b7is",id:309},{text:"\u00b7an",id:351},
+  {text:"\u00b7important",id:952},{text:"\u00b7consideration",id:7937},{text:"\u00b7when",id:626},
+  {text:"\u00b7planning",id:3921},{text:"\u00b7the",id:261},{text:"\u00b7shipment",id:32330},
+  {text:"\u00b7process",id:937},{text:".",id:46}
+];
+
+var currentScene = 0, totalScenes = 5;
+function $(id) { return document.getElementById(id); }
+
+function showScene(n) {
+  for (var i = 0; i < totalScenes; i++) {
+    var s = $("scene" + i); s.classList.remove("active","visible");
+  }
+  var sc = $("scene" + n); sc.classList.add("active");
+  setTimeout(function(){ sc.classList.add("visible"); }, 50);
+  if (n===0) scene1(); if (n===1) scene2(); if (n===2) scene3();
+  if (n===3) scene4(); if (n===4) scene5();
+  $("prevBtn").disabled = (n===0);
+  $("nextBtn").textContent = (n===totalScenes-1) ? "Restart" : "Next";
+  $("stepIndicator").textContent = "Scene "+(n+1)+" of "+totalScenes;
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+$("nextBtn").addEventListener("click", function(){
+  if (currentScene<totalScenes-1){ currentScene++; showScene(currentScene); }
+  else { currentScene=0; showScene(0); }
+});
+$("prevBtn").addEventListener("click", function(){
+  if (currentScene>0){ currentScene--; showScene(currentScene); }
+});
+document.addEventListener("keydown", function(e){
+  if (e.key==="ArrowRight"||e.key===" "){ e.preventDefault(); $("nextBtn").click(); }
+  if (e.key==="ArrowLeft"){ e.preventDefault(); $("prevBtn").click(); }
+});
+
+function scene1() {
+  var t = $("raw-text"); t.textContent = ""; var i = 0;
+  (function type(){ if(i<SENTENCE.length){ t.textContent=SENTENCE.substring(0,i+1); i++; setTimeout(type,25); } })();
+}
+
+function scene2() {
+  var t = $("byte-text"); t.textContent = "";
+  for (var i=0; i<SENTENCE.length; i++) {
+    var ch=SENTENCE[i], code=SENTENCE.charCodeAt(i);
+    var span=document.createElement("span"); span.className="char-box";
+    var lbl=document.createElement("span"); lbl.className="byte-val"; lbl.textContent=code;
+    span.appendChild(lbl);
+    span.appendChild(document.createTextNode(ch===" "?"\u00a0":ch));
+    (function(s){
+      s.addEventListener("mouseenter",function(){s.classList.add("show-bytes","highlight");});
+      s.addEventListener("mouseleave",function(){s.classList.remove("show-bytes","highlight");});
+    })(span);
+    t.appendChild(span);
+  }
+  var boxes=t.querySelectorAll(".char-box");
+  for (var j=0; j<Math.min(14,boxes.length); j++) {
+    (function(b,d){ setTimeout(function(){ b.classList.add("show-bytes","highlight"); setTimeout(function(){b.classList.remove("highlight");},800); },500+d*120); })(boxes[j],j);
+  }
+}
+
+function scene3() {
+  var c = $("bpe-steps"); c.textContent = "";
+  var merges = [
+    {step:1,o1:"a",o2:"t",res:"at",cnt:"3 times",b:22,a:19,
+     toks:["t","h","e","_","c",{m:"at"},"_","s",{m:"at"},"_","o","n","_","t","h","e","_","m",{m:"at"}]},
+    {step:2,o1:"t",o2:"h",res:"th",cnt:"2 times",b:19,a:17,
+     toks:[{m:"th"},"e","_","c",{m:"at"},"_","s",{m:"at"},"_","o","n","_",{m:"th"},"e","_","m",{m:"at"}]},
+    {step:3,o1:"th",o2:"e",res:"the",cnt:"2 times",b:17,a:15,
+     toks:[{m:"the"},"_","c",{m:"at"},"_","s",{m:"at"},"_","o","n","_",{m:"the"},"_","m",{m:"at"}]},
+    {step:4,o1:"s",o2:"at",res:"sat",cnt:"1 time",b:15,a:14,
+     toks:[{m:"the"},"_","c",{m:"at"},"_",{m:"sat"},"_","o","n","_",{m:"the"},"_","m",{m:"at"}]},
+    {step:5,o1:"c",o2:"at",res:"cat",cnt:"1 time",b:14,a:13,
+     toks:[{m:"the"},"_",{m:"cat"},"_",{m:"sat"},"_","o","n","_",{m:"the"},"_","m",{m:"at"}]},
+    {step:6,o1:"m",o2:"at",res:"mat",cnt:"1 time",b:13,a:11,
+     toks:[{m:"the"},"_",{m:"cat"},"_",{m:"sat"},"_","o","n","_",{m:"the"},"_",{m:"mat"}]}
+  ];
+
+  merges.forEach(function(mg, idx){
+    var div = document.createElement("div"); div.className = "merge-step";
+    var sn = document.createElement("div"); sn.className = "step-num"; sn.textContent = "Merge #"+mg.step;
+    div.appendChild(sn);
+
+    var pair = document.createElement("div"); pair.className = "merge-pair";
+    var old = document.createElement("span"); old.className = "merge-old";
+    old.textContent = '"'+mg.o1+'" + "'+mg.o2+'"'; pair.appendChild(old);
+    var arrow = document.createElement("span"); arrow.className = "merge-arrow"; arrow.textContent = "\u2192";
+    pair.appendChild(arrow);
+    var nw = document.createElement("span"); nw.className = "merge-new";
+    nw.textContent = '"'+mg.res+'"'; pair.appendChild(nw);
+    var info = document.createElement("span"); info.className = "merge-info";
+    info.textContent = "("+mg.cnt+")"; pair.appendChild(info);
+    div.appendChild(pair);
+
+    var cnt = document.createElement("div"); cnt.className = "merge-count";
+    cnt.textContent = mg.b+" tokens \u2192 "+mg.a+" tokens"; div.appendChild(cnt);
+
+    var res = document.createElement("div"); res.className = "merge-result";
+    mg.toks.forEach(function(tok, ti){
+      var sp = document.createElement("span");
+      if (typeof tok === "string") { sp.textContent = tok; }
+      else { sp.textContent = tok.m; sp.className = "merged"; }
+      res.appendChild(sp);
+      if (ti < mg.toks.length - 1) res.appendChild(document.createTextNode(" "));
+    });
+    div.appendChild(res);
+    c.appendChild(div);
+    setTimeout(function(){ div.classList.add("visible"); }, 300 + idx * 500);
+  });
+}
+
+function scene4() {
+  var c = $("real-tokens"); c.textContent = "";
+  var colors = ["tc0","tc1","tc2","tc3","tc4","tc5","tc6","tc7"];
+  TOKENS.forEach(function(tok, idx){
+    var div = document.createElement("div"); div.className = "token-box "+colors[idx%colors.length];
+    var txt = document.createElement("div"); txt.className = "token-text"; txt.textContent = tok.text;
+    var tid = document.createElement("div"); tid.className = "token-id"; tid.textContent = tok.id;
+    div.appendChild(txt); div.appendChild(tid); c.appendChild(div);
+    setTimeout(function(){ div.classList.add("visible"); }, 200 + idx * 150);
+  });
+}
+
+function scene5() {
+  var t = $("final-ids"); t.textContent = "";
+  var colors = ["#a855f7","#ec4899","#3b82f6","#f59e0b","#22c55e","#06b6d4","#f43f5e","#8b5cf6"];
+  TOKENS.forEach(function(tok, idx){
+    var sp = document.createElement("span"); sp.className = "id-span";
+    sp.style.color = colors[idx%colors.length]; sp.style.opacity = "0";
+    sp.textContent = tok.id + (idx<TOKENS.length-1 ? "  " : "");
+    t.appendChild(sp);
+    setTimeout(function(){ sp.style.opacity="1"; }, 300 + idx*200);
+  });
+  setTimeout(function(){ $("byte-bar").style.width="15%"; $("token-bar").style.width="100%"; }, 800);
+}
+
+showScene(0);
+</script>
+</body>
+</html>
